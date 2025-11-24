@@ -1,138 +1,117 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <title>Markerless AR House</title>
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-        }
+  <meta charset="utf-8" />
+  <title>Markerless AR House</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 
-        #overlay {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            right: 10px;
-            color: white;
-            font-family: sans-serif;
-            z-index: 2;
-            text-shadow: 0 0 4px black;
-        }
-
-        #overlay button {
-            margin-top: 6px;
-            padding: 6px 10px;
-            font-size: 14px;
-        }
-    </style>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: system-ui, sans-serif; }
+    #info {
+      position: absolute; top: 10px; left: 10px; right: 10px;
+      color: white; text-shadow: 0 0 5px black; z-index: 2;
+    }
+  </style>
 </head>
 
 <body>
-    <script>
-        document.getElementById("startAR").addEventListener("click", () => {
-            const scene = document.querySelector("a-scene");
+  <div id="info">
+    <b>Markerless AR House</b><br>
+    Tap “Enter AR” → Move phone → Tap to place house 🏡
+  </div>
 
-            if (navigator.xr) {
-                scene.renderer.xr.enabled = true;
-                navigator.xr.requestSession("immersive-ar", {
-                    requiredFeatures: ["hit-test", "local-floor"],
-                    optionalFeatures: ["dom-overlay"],
-                    domOverlay: { root: document.getElementById("overlay") }
-                }).then((session) => {
-                    scene.renderer.xr.setSession(session);
-                });
-            } else {
-                alert("WebXR not supported on this device.");
-            }
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.161.0/build/three.module.js";
+    import { ARButton } from "https://unpkg.com/three@0.161.0/examples/jsm/webxr/ARButton.js";
+    import { GLTFLoader } from "https://unpkg.com/three@0.161.0/examples/jsm/loaders/GLTFLoader.js";
+
+    let camera, scene, renderer;
+    let reticle, house = null;
+    let hitTestSource = null;
+    let hitTestSourceRequested = false;
+
+    init();
+    animate();
+
+    function init() {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.body.appendChild(renderer.domElement);
+
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+      scene.add(light);
+
+      const geo = new THREE.RingGeometry(0.08, 0.1, 32).rotateX(-Math.PI / 2);
+      reticle = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffff00 }));
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
+
+      const button = ARButton.createButton(renderer, { requiredFeatures: ["hit-test"] });
+      document.body.appendChild(button);
+
+      const controller = renderer.xr.getController(0);
+      controller.addEventListener("select", placeHouse);
+      scene.add(controller);
+    }
+
+    function placeHouse() {
+      if (!reticle.visible) return;
+
+      if (!house) {
+        const loader = new GLTFLoader();
+        loader.load("house.glb?v=4", (gltf) => {
+          house = gltf.scene;
+          house.scale.set(0.4, 0.4, 0.4);
+          scene.add(house);
+          setPosition();
         });
-    </script>
+      } else setPosition();
+    }
 
+    function setPosition() {
+      house.position.setFromMatrixPosition(reticle.matrix);
+      house.visible = true;
+    }
 
-    <a-scene embedded vr-mode-ui="enabled: false" renderer="colorManagement: true;"
-        webxr="mode: ar; optionalFeatures: hit-test; requiredFeatures: hit-test;">
-        <!-- Assets: your realistic house model -->
-        <a-assets>
-            <!-- Put a file named house.glb next to index.html -->
-            <a-asset-item id="houseModel" src="house.glb"></a-asset-item>
-        </a-assets>
+    function animate() {
+      renderer.setAnimationLoop(render);
+    }
 
-        <!-- Reticle that follows the hit-test result -->
-        <a-entity id="reticle" geometry="primitive: ring; radiusInner: 0.05; radiusOuter: 0.06"
-            material="shader: flat; opacity: 0.9" rotation="-90 0 0" visible="false" ar-hit-test-listener></a-entity>
+    function render(timestamp, frame) {
+      if (!frame) return;
 
-        <!-- Realistic house model -->
-        <a-entity id="house" gltf-model="#houseModel" scale="0.4 0.4 0.4" visible="false"></a-entity>
+      const session = renderer.xr.getSession();
+      const refSpace = renderer.xr.getReferenceSpace();
 
-        <a-entity camera></a-entity>
-    </a-scene>
-
-    <script>
-        // Component: updates the reticle using WebXR hit-test
-        AFRAME.registerComponent("ar-hit-test-listener", {
-            init: function () {
-                const sceneEl = this.el.sceneEl;
-                this.xrHitTestSource = null;
-                this.viewerSpace = null;
-                this.referenceSpace = null;
-
-                sceneEl.renderer.xr.addEventListener("sessionstart", async () => {
-                    const session = sceneEl.renderer.xr.getSession();
-
-                    this.referenceSpace = await session.requestReferenceSpace("local");
-                    this.viewerSpace = await session.requestReferenceSpace("viewer");
-
-                    this.xrHitTestSource = await session.requestHitTestSource({
-                        space: this.viewerSpace,
-                    });
-
-                    session.addEventListener("end", () => {
-                        this.xrHitTestSource = null;
-                        this.viewerSpace = null;
-                        this.referenceSpace = null;
-                        this.el.object3D.visible = false;
-                    });
-                });
-            },
-
-            tick: function () {
-                const xrFrame = this.el.sceneEl.frame;
-                if (!xrFrame || !this.xrHitTestSource || !this.referenceSpace) return;
-
-                const hitTestResults = xrFrame.getHitTestResults(this.xrHitTestSource);
-                const reticleObj = this.el.object3D;
-
-                if (hitTestResults.length > 0) {
-                    const pose = hitTestResults[0].getPose(this.referenceSpace);
-                    const pos = pose.transform.position;
-                    const rot = pose.transform.orientation;
-
-                    reticleObj.visible = true;
-                    reticleObj.position.set(pos.x, pos.y, pos.z);
-                    reticleObj.quaternion.set(rot.x, rot.y, rot.z, rot.w);
-                } else {
-                    reticleObj.visible = false;
-                }
-            },
+      if (!hitTestSourceRequested) {
+        session.requestReferenceSpace("viewer").then((viewerSpace) => {
+          session.requestHitTestSource({ space: viewerSpace }).then((source) => {
+            hitTestSource = source;
+          });
         });
-
-        // Tap to place house at reticle
-        const scene = document.querySelector("a-scene");
-        const house = document.getElementById("house");
-        const reticle = document.getElementById("reticle");
-
-        scene.addEventListener("click", () => {
-            if (!reticle.object3D.visible) return;
-            const pos = reticle.getAttribute("position");
-            const rot = reticle.getAttribute("rotation");
-            house.setAttribute("position", pos);
-            house.setAttribute("rotation", rot);
-            house.setAttribute("visible", true);
+        session.addEventListener("end", () => {
+          hitTestSourceRequested = false;
+          hitTestSource = null;
         });
-    </script>
+        hitTestSourceRequested = true;
+      }
+
+      if (hitTestSource) {
+        const hits = frame.getHitTestResults(hitTestSource);
+        if (hits.length > 0) {
+          const pose = hits[0].getPose(refSpace);
+          reticle.matrix.fromArray(pose.transform.matrix);
+          reticle.visible = true;
+        } else reticle.visible = false;
+      }
+
+      renderer.render(scene, camera);
+    }
+  </script>
 </body>
-
-
 </html>
