@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Markerless AR House</title>
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+
+        #overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            color: white;
+            font-family: sans-serif;
+            z-index: 2;
+            text-shadow: 0 0 4px black;
+        }
+
+        #overlay button {
+            margin-top: 6px;
+            padding: 6px 10px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <script>
+        document.getElementById("startAR").addEventListener("click", () => {
+            const scene = document.querySelector("a-scene");
+
+            if (navigator.xr) {
+                scene.renderer.xr.enabled = true;
+                navigator.xr.requestSession("immersive-ar", {
+                    requiredFeatures: ["hit-test", "local-floor"],
+                    optionalFeatures: ["dom-overlay"],
+                    domOverlay: { root: document.getElementById("overlay") }
+                }).then((session) => {
+                    scene.renderer.xr.setSession(session);
+                });
+            } else {
+                alert("WebXR not supported on this device.");
+            }
+        });
+    </script>
+
+
+    <a-scene embedded vr-mode-ui="enabled: false" renderer="colorManagement: true;"
+        webxr="mode: ar; optionalFeatures: hit-test; requiredFeatures: hit-test;">
+        <!-- Assets: your realistic house model -->
+        <a-assets>
+            <!-- Put a file named house.glb next to index.html -->
+            <a-asset-item id="houseModel" src="house.glb"></a-asset-item>
+        </a-assets>
+
+        <!-- Reticle that follows the hit-test result -->
+        <a-entity id="reticle" geometry="primitive: ring; radiusInner: 0.05; radiusOuter: 0.06"
+            material="shader: flat; opacity: 0.9" rotation="-90 0 0" visible="false" ar-hit-test-listener></a-entity>
+
+        <!-- Realistic house model -->
+        <a-entity id="house" gltf-model="#houseModel" scale="0.4 0.4 0.4" visible="false"></a-entity>
+
+        <a-entity camera></a-entity>
+    </a-scene>
+
+    <script>
+        // Component: updates the reticle using WebXR hit-test
+        AFRAME.registerComponent("ar-hit-test-listener", {
+            init: function () {
+                const sceneEl = this.el.sceneEl;
+                this.xrHitTestSource = null;
+                this.viewerSpace = null;
+                this.referenceSpace = null;
+
+                sceneEl.renderer.xr.addEventListener("sessionstart", async () => {
+                    const session = sceneEl.renderer.xr.getSession();
+
+                    this.referenceSpace = await session.requestReferenceSpace("local");
+                    this.viewerSpace = await session.requestReferenceSpace("viewer");
+
+                    this.xrHitTestSource = await session.requestHitTestSource({
+                        space: this.viewerSpace,
+                    });
+
+                    session.addEventListener("end", () => {
+                        this.xrHitTestSource = null;
+                        this.viewerSpace = null;
+                        this.referenceSpace = null;
+                        this.el.object3D.visible = false;
+                    });
+                });
+            },
+
+            tick: function () {
+                const xrFrame = this.el.sceneEl.frame;
+                if (!xrFrame || !this.xrHitTestSource || !this.referenceSpace) return;
+
+                const hitTestResults = xrFrame.getHitTestResults(this.xrHitTestSource);
+                const reticleObj = this.el.object3D;
+
+                if (hitTestResults.length > 0) {
+                    const pose = hitTestResults[0].getPose(this.referenceSpace);
+                    const pos = pose.transform.position;
+                    const rot = pose.transform.orientation;
+
+                    reticleObj.visible = true;
+                    reticleObj.position.set(pos.x, pos.y, pos.z);
+                    reticleObj.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+                } else {
+                    reticleObj.visible = false;
+                }
+            },
+        });
+
+        // Tap to place house at reticle
+        const scene = document.querySelector("a-scene");
+        const house = document.getElementById("house");
+        const reticle = document.getElementById("reticle");
+
+        scene.addEventListener("click", () => {
+            if (!reticle.object3D.visible) return;
+            const pos = reticle.getAttribute("position");
+            const rot = reticle.getAttribute("rotation");
+            house.setAttribute("position", pos);
+            house.setAttribute("rotation", rot);
+            house.setAttribute("visible", true);
+        });
+    </script>
+</body>
+
+
+</html>
